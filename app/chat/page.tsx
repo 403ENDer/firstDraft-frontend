@@ -1,8 +1,8 @@
 "use client";
 
 import type React from "react";
-
-import { useState, useEffect, Suspense } from "react";
+import remarkGfm from "remark-gfm";
+import { useState, useEffect, Suspense, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -109,9 +109,44 @@ function ChatPageContent() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
 
+  // Add ref for auto-scrolling
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [progressStage, setProgressStage] = useState<number>(0);
+  const [isStoryFlow, setIsStoryFlow] = useState(false);
+
   useEffect(() => {
     setHasHydrated(true);
   }, []);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isGenerating]);
+
+  // Handle scroll events to show/hide scroll button
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setShowScrollButton(!isNearBottom);
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Function to scroll to bottom
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  };
 
   // Fetch all sessions for the user on mount
   useEffect(() => {
@@ -148,39 +183,86 @@ function ChatPageContent() {
   // Send message
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !currentSessionId || !email) return;
+
     const userMessage: ChatMessage = {
       id: uuidv4(),
       role: "user",
       content: chatInput.trim(),
       timestamp: new Date(),
     };
+
     setMessages((prev) => [...prev, userMessage]);
     setChatInput("");
     setIsGenerating(true);
     setProgress(0);
-    // Simulate progress for 2 seconds
-    const start = Date.now();
-    const duration = 2000;
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const percent = Math.min(100, Math.round((elapsed / duration) * 100));
-      setProgress(percent);
-      if (percent >= 100) {
-        clearInterval(interval);
-        setIsGenerating(false);
-        sendToBackend(userMessage.content);
-      }
-    }, 50);
-  };
+    setProgressStage(0);
 
-  // Send to backend and show response
-  const sendToBackend = async (message: string) => {
+    const storyTrigger = /(generate|write)/i.test(userMessage.content);
+    setIsStoryFlow(storyTrigger);
+
+    if (storyTrigger) {
+      // staged flow - progress continues until API response
+      const stages = 4;
+      let currentStage = 0;
+
+      const stageInterval = setInterval(() => {
+        currentStage++;
+        setProgressStage(currentStage);
+        setProgress((currentStage / stages) * 100);
+
+        if (currentStage >= stages) {
+          // Don't stop here, continue progress until API response
+          setProgress(95); // Set to 95% and wait for API
+        }
+      }, 2000); // 2s per stage for better UX
+
+      // Store the interval ID to clear it when API responds
+      (window as any).stageInterval = stageInterval;
+    } else {
+      // normal linear progress - continue until API response
+      const start = Date.now();
+      const duration = 8000; // 8s to reach 90%
+      const interval = setInterval(() => {
+        const elapsed = Date.now() - start;
+        const percent = Math.min(90, Math.round((elapsed / duration) * 90));
+        setProgress(percent);
+        if (percent >= 90) {
+          // Don't stop here, wait for API response
+          setProgress(90);
+        }
+      }, 100);
+
+      // Store the interval ID to clear it when API responds
+      (window as any).progressInterval = interval;
+    }
+
+    // Send to backend immediately and handle progress completion
     try {
       const res: any = await api.post("/chat/message", {
-        message,
+        message: userMessage.content,
         sessionId: currentSessionId,
         email,
       });
+
+      // Complete the progress bar
+      setProgress(100);
+      setProgressStage(storyTrigger ? 4 : 0);
+
+      // Clear any running intervals
+      if ((window as any).stageInterval) {
+        clearInterval((window as any).stageInterval);
+        (window as any).stageInterval = null;
+      }
+      if ((window as any).progressInterval) {
+        clearInterval((window as any).progressInterval);
+        (window as any).progressInterval = null;
+      }
+
+      // Small delay to show 100% completion
+      setTimeout(() => {
+        setIsGenerating(false);
+      }, 500);
+
       const assistantMessage: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
@@ -190,6 +272,7 @@ function ChatPageContent() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+
       // If sessionId was just created, update sessions list
       if (!sessions.some((s) => s.sessionId === res.data.sessionId)) {
         setSessions((prev) => [
@@ -207,6 +290,25 @@ function ChatPageContent() {
         );
       }
     } catch (err: any) {
+      // Complete the progress bar even on error
+      setProgress(100);
+      setProgressStage(storyTrigger ? 4 : 0);
+
+      // Clear any running intervals
+      if ((window as any).stageInterval) {
+        clearInterval((window as any).stageInterval);
+        (window as any).stageInterval = null;
+      }
+      if ((window as any).progressInterval) {
+        clearInterval((window as any).progressInterval);
+        (window as any).progressInterval = null;
+      }
+
+      // Small delay to show 100% completion
+      setTimeout(() => {
+        setIsGenerating(false);
+      }, 500);
+
       const assistantMessage: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
@@ -381,7 +483,10 @@ function ChatPageContent() {
         {currentSessionId ? (
           <>
             {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto px-6 py-6 bg-[#10141c] rounded-lg shadow-inner">
+            <div
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto px-6 py-6 bg-[#10141c] rounded-lg shadow-inner relative"
+            >
               <div className="max-w-4xl mx-auto space-y-8">
                 {messages.length === 0 && (
                   <div className="text-center space-y-6 py-16">
@@ -519,22 +624,97 @@ function ChatPageContent() {
                           FirstDraft
                         </div>
                         <div className="bg-gray-800 rounded-lg p-5 max-w-2xl">
-                          <p className="text-gray-200 mb-4">
-                            Generating your script...
-                          </p>
-                          <div className="space-y-3">
-                            <div className="text-center">
-                              <p className="text-gray-400 text-sm">
-                                This may take a moment.
-                              </p>
-                            </div>
-                            <Progress value={progress} className="h-2" />
-                          </div>
+                          {isStoryFlow ? (
+                            <>
+                              <div className="space-y-4 mb-6">
+                                {/* Show only the current stage */}
+                                {progressStage > 0 && progressStage <= 4 && (
+                                  <div className="relative">
+                                    <div className="flex items-center space-x-4 p-4 rounded-lg bg-gradient-to-r from-cyan-500/30 to-blue-500/30 border-2 border-cyan-400/50 shadow-lg">
+                                      <div className="text-3xl animate-pulse">
+                                        {
+                                          ["🎯", "📖", "🎬", "✨"][
+                                            progressStage - 1
+                                          ]
+                                        }
+                                      </div>
+                                      <div className="flex-1">
+                                        <div className="text-lg font-semibold text-cyan-300 mb-1">
+                                          {
+                                            [
+                                              "Analyzing Vision",
+                                              "Story Development",
+                                              "Script Generation",
+                                              "Final Polish",
+                                            ][progressStage - 1]
+                                          }
+                                        </div>
+                                        <div className="text-sm text-cyan-200">
+                                          {
+                                            [
+                                              "Understanding your creative direction",
+                                              "Crafting compelling narrative",
+                                              "Writing cinematic dialogue",
+                                              "Optimizing for impact",
+                                            ][progressStage - 1]
+                                          }
+                                        </div>
+                                      </div>
+                                      <div className="w-4 h-4 bg-cyan-400 rounded-full animate-ping"></div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="relative">
+                                <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                  <span>Progress</span>
+                                  <span>{Math.round(progress)}%</span>
+                                </div>
+                                <Progress
+                                  value={progress}
+                                  className="h-3 bg-gray-700"
+                                />
+                                <div className="absolute inset-0 h-3 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-300 opacity-20"></div>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-center mb-6">
+                                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4 animate-pulse">
+                                  <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                                    <div className="w-4 h-4 bg-purple-500 rounded-full"></div>
+                                  </div>
+                                </div>
+                                <h3 className="text-lg font-semibold text-white mb-2">
+                                  Processing Your Request
+                                </h3>
+                                <p className="text-gray-300 text-sm">
+                                  AI is analyzing and preparing your response
+                                </p>
+                              </div>
+
+                              <div className="relative">
+                                <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                  <span>Progress</span>
+                                  <span>{Math.round(progress)}%</span>
+                                </div>
+                                <Progress
+                                  value={progress}
+                                  className="h-3 bg-gray-700"
+                                />
+                                <div className="absolute inset-0 h-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300 opacity-20"></div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
+
+                {/* Auto-scroll anchor */}
+                <div ref={messagesEndRef} />
               </div>
             </div>
 
