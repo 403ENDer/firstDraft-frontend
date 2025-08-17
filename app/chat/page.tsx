@@ -27,10 +27,19 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/hooks/use-auth-store";
 import ReactMarkdown from "react-markdown";
 import { v4 as uuidv4 } from "uuid";
 import Image from "next/image";
+import { useToast } from "@/hooks/use-toast";
+import { Upload, X, Image as ImageIcon } from "lucide-react";
 
 interface ChatMessage {
   id: string;
@@ -55,28 +64,6 @@ const saveChatSessions = (sessions: ChatSession[]) => {
   } catch (error) {
     console.error("Failed to save chat sessions:", error);
   }
-};
-
-const loadChatSessions = (): ChatSession[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Convert date strings back to Date objects
-      return parsed.map((session: any) => ({
-        ...session,
-        createdAt: new Date(session.createdAt),
-        updatedAt: new Date(session.updatedAt),
-        messages: session.messages.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp),
-        })),
-      }));
-    }
-  } catch (error) {
-    console.error("Failed to load chat sessions:", error);
-  }
-  return [];
 };
 
 function CopyButton({ text }: { text: string }) {
@@ -115,6 +102,10 @@ function ChatPageContent() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [progressStage, setProgressStage] = useState<number>(0);
   const [isStoryFlow, setIsStoryFlow] = useState(false);
+  const [screenplayType, setScreenplayType] = useState<string>("feature");
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
+  const { toast } = useToast();
 
   useEffect(() => {
     setHasHydrated(true);
@@ -180,6 +171,43 @@ function ChatPageContent() {
     setSessions((prev) => [{ sessionId: newSessionId, messages: [] }, ...prev]);
   };
 
+  // Handle image selection
+  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+
+    if (selectedImages.length + files.length > 2) {
+      toast({
+        title: "Image Limit Exceeded",
+        description: "You can only upload a maximum of 2 images.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newImages = [...selectedImages, ...files];
+    setSelectedImages(newImages);
+
+    // Create preview URLs
+    const newPreviewUrls = files.map((file) => URL.createObjectURL(file));
+    setImagePreviewUrls([...imagePreviewUrls, ...newPreviewUrls]);
+  };
+
+  // Remove image
+  const removeImage = (index: number) => {
+    const newImages = selectedImages.filter((_, i) => i !== index);
+    const newPreviewUrls = imagePreviewUrls.filter((_, i) => i !== index);
+
+    setSelectedImages(newImages);
+    setImagePreviewUrls(newPreviewUrls);
+  };
+
+  // Cleanup preview URLs on unmount
+  useEffect(() => {
+    return () => {
+      imagePreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [imagePreviewUrls]);
+
   // Send message
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !currentSessionId || !email) return;
@@ -196,6 +224,8 @@ function ChatPageContent() {
     setIsGenerating(true);
     setProgress(0);
     setProgressStage(0);
+    setSelectedImages([]);
+    setImagePreviewUrls([]);
 
     const storyTrigger = /(generate|write)/i.test(userMessage.content);
     setIsStoryFlow(storyTrigger);
@@ -211,10 +241,12 @@ function ChatPageContent() {
         setProgress((currentStage / stages) * 100);
 
         if (currentStage >= stages) {
-          // Don't stop here, continue progress until API response
-          setProgress(95); // Set to 95% and wait for API
+          // Keep stage 4 (Final Polish) visible and set progress to 95%
+          setProgressStage(4);
+          setProgress(95);
+          clearInterval(stageInterval); // Stop the stage progression
         }
-      }, 2000); // 2s per stage for better UX
+      }, 3000); // 2s per stage for better UX
 
       // Store the interval ID to clear it when API responds
       (window as any).stageInterval = stageInterval;
@@ -238,10 +270,22 @@ function ChatPageContent() {
 
     // Send to backend immediately and handle progress completion
     try {
-      const res: any = await api.post("/chat/message", {
-        message: userMessage.content,
-        sessionId: currentSessionId,
-        email,
+      // Prepare form data for images
+      const formData = new FormData();
+      formData.append("message", userMessage.content);
+      formData.append("sessionId", currentSessionId);
+      formData.append("email", email);
+      formData.append("screenplayType", screenplayType);
+
+      // Add images if any
+      selectedImages.forEach((image, index) => {
+        formData.append(`images`, image);
+      });
+
+      const res: any = await api.post("/chat/message", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
       });
 
       // Complete the progress bar
@@ -289,6 +333,9 @@ function ChatPageContent() {
           )
         );
       }
+
+      setSelectedImages([]);
+      setImagePreviewUrls([]);
     } catch (err: any) {
       // Complete the progress bar even on error
       setProgress(100);
@@ -318,6 +365,10 @@ function ChatPageContent() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Clear images after error
+      setSelectedImages([]);
+      setImagePreviewUrls([]);
     }
   };
 
@@ -370,9 +421,7 @@ function ChatPageContent() {
               href="/landing"
               className="flex items-center gap-3 hover:opacity-80 transition-opacity"
             >
-              <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center">
-                <span className="text-black text-sm font-bold">S</span>
-              </div>
+              <Image src={logo} alt="FirstDraft" className="w-8 h-8" />
               <span className="text-white font-semibold text-lg">
                 FirstDraft
               </span>
@@ -487,6 +536,28 @@ function ChatPageContent() {
               ref={messagesContainerRef}
               className="flex-1 overflow-y-auto px-6 py-6 bg-[#10141c] rounded-lg shadow-inner relative"
             >
+              {/* Scroll to bottom button */}
+              {showScrollButton && (
+                <button
+                  onClick={scrollToBottom}
+                  className="fixed bottom-24 right-8 z-50 w-12 h-12 bg-cyan-500 hover:bg-cyan-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 hover:scale-110"
+                  title="Scroll to bottom"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 14l-7 7m0 0l-7-7m7 7V3"
+                    />
+                  </svg>
+                </button>
+              )}
               <div className="max-w-4xl mx-auto space-y-8">
                 {messages.length === 0 && (
                   <div className="text-center space-y-6 py-16">
@@ -536,60 +607,159 @@ function ChatPageContent() {
                                 </div>
                               )}
                             <div className="pt-2 pb-1 pr-2">
-                              <ReactMarkdown
-                                components={{
-                                  h1: ({ node, ...props }) => (
-                                    <h1
-                                      className="text-2xl font-bold mt-4 mb-2"
-                                      {...props}
-                                    />
-                                  ),
-                                  h2: ({ node, ...props }) => (
-                                    <h2
-                                      className="text-xl font-semibold mt-3 mb-2"
-                                      {...props}
-                                    />
-                                  ),
-                                  h3: ({ node, ...props }) => (
-                                    <h3
-                                      className="text-lg font-semibold mt-2 mb-1"
-                                      {...props}
-                                    />
-                                  ),
-                                  ul: ({ node, ...props }) => (
-                                    <ul
-                                      className="list-disc ml-6 mb-2"
-                                      {...props}
-                                    />
-                                  ),
-                                  ol: ({ node, ...props }) => (
-                                    <ol
-                                      className="list-decimal ml-6 mb-2"
-                                      {...props}
-                                    />
-                                  ),
-                                  li: ({ node, ...props }) => (
-                                    <li className="mb-1" {...props} />
-                                  ),
-                                  code: ({ node, ...props }) => (
-                                    <code
-                                      className="bg-gray-800 px-1 rounded"
-                                      {...props}
-                                    />
-                                  ),
-                                  pre: ({ node, ...props }) => (
-                                    <pre
-                                      className="bg-gray-800 p-2 rounded mb-2 overflow-x-auto"
-                                      {...props}
-                                    />
-                                  ),
-                                  p: ({ node, ...props }) => (
-                                    <p className="mb-2" {...props} />
-                                  ),
-                                }}
-                              >
-                                {message.content}
-                              </ReactMarkdown>
+                              {(() => {
+                                try {
+                                  // Try to parse as JSON
+                                  const parsed = JSON.parse(message.content);
+                                  // Check if it has the expected structure for storyboard
+                                  if (
+                                    parsed &&
+                                    typeof parsed === "object" &&
+                                    Object.keys(parsed).length > 0
+                                  ) {
+                                    return (
+                                      <div className="max-w-7xl mx-auto p-6">
+                                        <h1 className="text-2xl font-bold text-center text-white">
+                                          Cinematic Storyboard
+                                        </h1>
+                                        {Object.entries(parsed).map(
+                                          ([key, chunk], index) => (
+                                            <div
+                                              key={key}
+                                              className="shadow-md rounded-2xl p-2 space-y-2"
+                                            >
+                                              {/* Scene Heading */}
+                                              <h2 className="text-2xl font-semibold text-white">
+                                                {(chunk as any).heading}
+                                              </h2>
+
+                                              {/* Environment */}
+                                              <div>
+                                                {/* <h3 className="font-bold text-lg">
+                                                  Environment
+                                                </h3> */}
+                                                <p className="text-white">
+                                                  {(chunk as any).environment}
+                                                </p>
+                                              </div>
+
+                                              {/* Characters */}
+                                              <div>
+                                                {/* <h3 className="font-bold text-lg">
+                                                    Characters
+                                                  </h3> */}
+                                                {(chunk as any).characters?.map(
+                                                  (char: string, i: number) => (
+                                                    <p key={i}>{char}</p>
+                                                  )
+                                                ) || (
+                                                  <p>No characters specified</p>
+                                                )}
+                                              </div>
+
+                                              {/* Activity */}
+                                              <div>
+                                                {/* <h3 className="font-bold text-lg">
+                                                    Activity
+                                                  </h3> */}
+                                                <p className="text-white">
+                                                  {(chunk as any).activity}
+                                                </p>
+                                              </div>
+
+                                              {/* Camera Direction */}
+                                              <div>
+                                                {/* <h3 className="font-bold text-lg">
+                                                    Camera Direction
+                                                  </h3> */}
+                                                <p className="text-white">
+                                                  {
+                                                    (chunk as any)
+                                                      .camera_direction
+                                                  }
+                                                </p>
+                                              </div>
+
+                                              {/* Audio & Visual Sync */}
+                                              <div>
+                                                {/* <h3 className="font-bold text-lg">
+                                                  Audio / Visual Sync
+                                                </h3> */}
+                                                <p className="text-white">
+                                                  {
+                                                    (chunk as any)
+                                                      .audio_visual_sync
+                                                  }
+                                                </p>
+                                              </div>
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
+                                    );
+                                  }
+                                } catch (error) {
+                                  // If parsing fails, fall back to regular message display
+                                }
+
+                                // Default: show as regular message with ReactMarkdown
+                                return (
+                                  <ReactMarkdown
+                                    components={{
+                                      h1: ({ node, ...props }) => (
+                                        <h1
+                                          className="text-2xl font-bold mt-4 mb-2"
+                                          {...props}
+                                        />
+                                      ),
+                                      h2: ({ node, ...props }) => (
+                                        <h2
+                                          className="text-xl font-semibold mt-3 mb-2"
+                                          {...props}
+                                        />
+                                      ),
+                                      h3: ({ node, ...props }) => (
+                                        <h3
+                                          className="text-lg font-semibold mt-2 mb-1"
+                                          {...props}
+                                        />
+                                      ),
+                                      ul: ({ node, ...props }) => (
+                                        <ul
+                                          className="list-disc ml-6 mb-2"
+                                          {...props}
+                                        />
+                                      ),
+                                      ol: ({ node, ...props }) => (
+                                        <ol
+                                          className="list-decimal ml-6 mb-2"
+                                          {...props}
+                                        />
+                                      ),
+                                      li: ({ node, ...props }) => (
+                                        <li className="mb-1" {...props} />
+                                      ),
+                                      code: ({ node, ...props }) => (
+                                        <code
+                                          className="bg-gray-800 px-1 rounded"
+                                          {...props}
+                                        />
+                                      ),
+                                      pre: ({ node, ...props }) => (
+                                        <pre
+                                          className="bg-gray-800 p-2 rounded mb-2 overflow-x-auto"
+                                          {...props}
+                                        />
+                                      ),
+                                      p: ({ node, ...props }) => (
+                                        <p className="mb-2" {...props} />
+                                      ),
+                                    }}
+                                  >
+                                    {message.content}
+                                  </ReactMarkdown>
+                                );
+                              })()}
                             </div>
                           </div>
                         ) : (
@@ -614,9 +784,7 @@ function ChatPageContent() {
                     <div className="flex gap-4">
                       <Avatar className="w-8 h-8 mt-1">
                         <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center">
-                          <span className="text-white text-xs font-bold">
-                            S
-                          </span>
+                          <Image src={logo} alt="FirstDraft" />
                         </div>
                       </Avatar>
                       <div className="flex-1">
@@ -667,10 +835,6 @@ function ChatPageContent() {
                               </div>
 
                               <div className="relative">
-                                <div className="flex justify-between text-xs text-gray-400 mb-2">
-                                  <span>Progress</span>
-                                  <span>{Math.round(progress)}%</span>
-                                </div>
                                 <Progress
                                   value={progress}
                                   className="h-3 bg-gray-700"
@@ -695,10 +859,6 @@ function ChatPageContent() {
                               </div>
 
                               <div className="relative">
-                                <div className="flex justify-between text-xs text-gray-400 mb-2">
-                                  <span>Progress</span>
-                                  <span>{Math.round(progress)}%</span>
-                                </div>
                                 <Progress
                                   value={progress}
                                   className="h-3 bg-gray-700"
@@ -721,19 +881,57 @@ function ChatPageContent() {
             {/* Input Area */}
             <div className="px-6 py-6 border-t border-gray-800">
               <div className="max-w-4xl mx-auto">
-                <div className="flex gap-3">
+                <div className="flex gap-3 items-end">
+                  {/* Scroll to bottom button */}
+                  {showScrollButton && (
+                    <button
+                      onClick={scrollToBottom}
+                      className="flex-shrink-0 w-10 h-10 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg flex items-center justify-center transition-colors"
+                      title="Scroll to bottom"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 14l-7 7m0 0l-7-7m7 7V3"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                  {/* Chat Input with Image Upload */}
                   <div className="flex-1 relative">
                     <Input
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       placeholder="Describe your cinematic vision..."
-                      className="bg-gray-800 border-gray-700 text-white placeholder-gray-400 pr-32 py-4"
+                      className="bg-gray-800 border-gray-700 text-white placeholder-gray-400 pr-32 pl-12 py-4"
                       onKeyPress={(e) => {
                         if (e.key === "Enter") {
                           handleSendMessage();
                         }
                       }}
                     />
+
+                    {/* Image Upload Button Inside Input */}
+                    <label className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-10">
+                      <div className="p-1.5 hover:bg-gray-700 rounded transition-colors">
+                        <Upload className="w-4 h-4 text-gray-400" />
+                      </div>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        onChange={handleImageSelect}
+                        className="hidden"
+                      />
+                    </label>
+
                     <Button
                       size="sm"
                       className="absolute right-3 top-1/2 -translate-y-1/2 bg-cyan-500 hover:bg-cyan-600 text-white px-6 py-2"
@@ -742,7 +940,50 @@ function ChatPageContent() {
                       Generate
                     </Button>
                   </div>
+
+                  {/* Screenplay Type Dropdown */}
+                  <Select
+                    value={screenplayType}
+                    onValueChange={setScreenplayType}
+                  >
+                    <SelectTrigger className="w-48 bg-gray-800 border-gray-700 text-white">
+                      <SelectValue placeholder="Screenplay Type" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                      <SelectItem value="linear">Linear Screenplay</SelectItem>
+                      <SelectItem value="non-linear">
+                        Non Linear Screenplay
+                      </SelectItem>
+                      <SelectItem value="parallel">
+                        Parallel Screenplay
+                      </SelectItem>
+                      <SelectItem value="circular">
+                        Circular Screenplay
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+
+                {/* Image Previews Below Input */}
+                {imagePreviewUrls.length > 0 && (
+                  <div className="mt-3 flex gap-3">
+                    {imagePreviewUrls.map((url, index) => (
+                      <div key={index} className="relative">
+                        <img
+                          src={url}
+                          alt={`Preview ${index + 1}`}
+                          className="w-20 h-20 object-cover rounded-lg border border-gray-600"
+                        />
+                        <button
+                          onClick={() => removeImage(index)}
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-sm"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </>

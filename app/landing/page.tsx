@@ -4,11 +4,12 @@ import type React from "react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { MessageSquare, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/hooks/use-auth-store";
-
+import logo from "@/public/logo.png";
+import Image from "next/image";
 export default function LandingPage() {
   const router = useRouter();
   const { token, user, logout } = useAuthStore();
@@ -64,19 +65,29 @@ export default function LandingPage() {
           href="/landing"
           className="flex items-center gap-3 hover:opacity-80 transition-opacity"
         >
-          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center">
-            <span className="text-black text-sm font-bold">S</span>
-          </div>
+          <Image src={logo} alt="FirstDraft" className="w-8 h-8" />
+
           <span className="text-white font-semibold text-lg">FirstDraft</span>
         </Link>
         <div className="flex items-center gap-4">
           {hasHydrated && !!token && !!user ? (
-            <Button
-              onClick={handleLogout}
-              className="bg-red-500 hover:bg-red-600 text-white px-6 py-2"
-            >
-              Logout
-            </Button>
+            <>
+              <Button
+                onClick={() => router.push("/chat")}
+                variant="ghost"
+                size="lg"
+                className="text-gray-100 hover:text-gray-400 hover:bg-gray-800 p-2"
+                title="Go to Chat"
+              >
+                <MessageSquare className="w-4 h-4" /> Go to chat
+              </Button>
+              <Button
+                onClick={handleLogout}
+                className="bg-red-500 hover:bg-red-600 text-white px-6 py-2"
+              >
+                Logout
+              </Button>
+            </>
           ) : (
             <>
               <Link href="/signup">
