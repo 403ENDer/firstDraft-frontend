@@ -40,6 +40,7 @@ import { v4 as uuidv4 } from "uuid";
 import Image from "next/image";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, X, Image as ImageIcon } from "lucide-react";
+import { AnyARecord } from "node:dns";
 
 interface ChatMessage {
   id: string;
@@ -630,68 +631,13 @@ function ChatPageContent() {
                                             >
                                               {/* Scene Heading */}
                                               <h2 className="text-2xl font-semibold text-white">
-                                                {(chunk as any).heading}
+                                                Scene{" "}
+                                                {(chunk as any).scene_number}
                                               </h2>
-
-                                              {/* Environment */}
-                                              <div>
-                                                {/* <h3 className="font-bold text-lg">
-                                                  Environment
-                                                </h3> */}
-                                                <p className="text-white">
-                                                  {(chunk as any).environment}
-                                                </p>
-                                              </div>
-
-                                              {/* Characters */}
-                                              <div>
-                                                {/* <h3 className="font-bold text-lg">
-                                                    Characters
-                                                  </h3> */}
-                                                {(chunk as any).characters?.map(
-                                                  (char: string, i: number) => (
-                                                    <p key={i}>{char}</p>
-                                                  )
-                                                ) || (
-                                                  <p>No characters specified</p>
-                                                )}
-                                              </div>
-
-                                              {/* Activity */}
-                                              <div>
-                                                {/* <h3 className="font-bold text-lg">
-                                                    Activity
-                                                  </h3> */}
-                                                <p className="text-white">
-                                                  {(chunk as any).activity}
-                                                </p>
-                                              </div>
-
-                                              {/* Camera Direction */}
-                                              <div>
-                                                {/* <h3 className="font-bold text-lg">
-                                                    Camera Direction
-                                                  </h3> */}
-                                                <p className="text-white">
-                                                  {
-                                                    (chunk as any)
-                                                      .camera_direction
-                                                  }
-                                                </p>
-                                              </div>
-
-                                              {/* Audio & Visual Sync */}
-                                              <div>
-                                                {/* <h3 className="font-bold text-lg">
-                                                  Audio / Visual Sync
-                                                </h3> */}
-                                                <p className="text-white">
-                                                  {
-                                                    (chunk as any)
-                                                      .audio_visual_sync
-                                                  }
-                                                </p>
-                                              </div>
+                                              {/* Scene Conente */}
+                                              <p className="text-white">
+                                                {(chunk as any).content}
+                                              </p>
                                             </div>
                                           )
                                         )}
