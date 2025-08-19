@@ -103,7 +103,7 @@ function ChatPageContent() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [progressStage, setProgressStage] = useState<number>(0);
   const [isStoryFlow, setIsStoryFlow] = useState(false);
-  const [screenplayType, setScreenplayType] = useState<string>("feature");
+  const [screenplayType, setScreenplayType] = useState<string>("linear");
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
   const { toast } = useToast();
